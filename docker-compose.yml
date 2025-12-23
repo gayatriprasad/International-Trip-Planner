@@ -1,0 +1,32 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - FLIGHT_TOOL_URL=http://flight_tool:8001
+      - DB_TOOL_URL=http://db_tool:8002
+    depends_on:
+      - flight_tool
+      - db_tool
+
+  flight_tool:
+    build:
+      context: .
+      dockerfile: apps/flight_tool/Dockerfile
+    ports:
+      - "8001:8001"
+
+  db_tool:
+    build:
+      context: .
+      dockerfile: apps/db_tool/Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - dbdata:/data
+
+volumes:
+  dbdata:
