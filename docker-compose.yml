@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   orchestrator:
     build:
@@ -8,25 +10,44 @@ services:
     environment:
       - FLIGHT_TOOL_URL=http://flight_tool:8001
       - DB_TOOL_URL=http://db_tool:8002
+      - REDIS_HOST=redis
+      # LangSmith Configuration
+      - LANGCHAIN_TRACING_V2=true
+      - LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+      - LANGCHAIN_PROJECT=International-Trip-Planner
+      # Secret key loaded from .env file
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
     depends_on:
       - flight_tool
       - db_tool
+      - redis
+    networks:
+      - trip_planner_net
 
   flight_tool:
     build:
       context: .
       dockerfile: apps/flight_tool/Dockerfile
-    ports:
-      - "8001:8001"
+    networks:
+      - trip_planner_net
 
   db_tool:
     build:
       context: .
       dockerfile: apps/db_tool/Dockerfile
-    ports:
-      - "8002:8002"
     volumes:
       - dbdata:/data
+    networks:
+      - trip_planner_net
+
+  redis:
+    image: "redis:alpine"
+    networks:
+      - trip_planner_net
 
 volumes:
   dbdata:
+
+networks:
+  trip_planner_net:
+    driver: bridge

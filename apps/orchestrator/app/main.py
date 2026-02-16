@@ -1,3 +1,5 @@
+# apps/orchestrator/app/main.py
+
 from __future__ import annotations
 
 import os
@@ -8,6 +10,11 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+
+# --- LangGraph Imports ---
+from .graph import app as graph_app
+from .state import FlightSearchIn, GraphState
+# --- End LangGraph Imports ---
 
 from shared.logging import configure_logging, get_logger
 from shared.redis_client import RedisClient
@@ -22,18 +29,6 @@ RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 CB_FAIL_THRESHOLD = int(os.getenv("CB_FAIL_THRESHOLD", "5"))
 CB_WINDOW_SECONDS = int(os.getenv("CB_WINDOW_SECONDS", "60"))
 CB_OPEN_SECONDS = int(os.getenv("CB_OPEN_SECONDS", "60"))
-
-
-class FlightSearchIn(BaseModel):
-    # allow city names too; orchestrator will resolve to IATA via flight_tool
-    origin: str = Field(min_length=2, max_length=64)
-    destination: str = Field(min_length=2, max_length=64)
-    date: str = Field(min_length=10, max_length=10, description="YYYY-MM-DD")
-    session_id: Optional[str] = None
-    max_results: int = Field(default=10, ge=1, le=50)
-    max_stops: int = Field(default=2, ge=0, le=3)
-    max_price: Optional[float] = None
-    currency: str = Field(default="USD", min_length=3, max_length=3)
 
 
 class FlightSearchOut(BaseModel):
@@ -77,8 +72,6 @@ async def health() -> dict:
 
 
 def _user_key(req: Request, payload_session_id: Optional[str]) -> str:
-    # Prefer explicit session_id, otherwise IP-based.
-    # (For local dev: stable enough.)
     if payload_session_id:
         return f"sess:{payload_session_id}"
     client_host = req.client.host if req.client else "unknown"
@@ -92,7 +85,8 @@ async def _tool_post(
     trace_id: str,
     timeout_s: float,
 ) -> dict:
-    # Circuit breaker gating
+    # This entire function, with its robust circuit breaker logic, remains unchanged.
+    # It is a dependency that we will inject into our graph.
     allowed, state = await app.state.cbreaker.allow(tool_name)
     if not allowed:
         raise HTTPException(
@@ -131,7 +125,7 @@ async def flight_search(req: Request, body: FlightSearchIn) -> FlightSearchOut:
     trace_id = str(uuid.uuid4())
     user_key = _user_key(req, body.session_id)
 
-    # Rate limit at orchestrator boundary
+    # 1. Rate limit at the boundary (unchanged)
     rl = await app.state.rate_limiter.check(user_key=user_key, tool="flight_search")
     if not rl.allowed:
         raise HTTPException(
@@ -143,78 +137,39 @@ async def flight_search(req: Request, body: FlightSearchIn) -> FlightSearchOut:
             },
         )
 
-    # 1) Resolve origin/destination to IATA codes via flight_tool resolve_location
-    origin_res = await _tool_post(
-        tool_name="flight_tool.resolve_location",
-        url=f"{FLIGHT_TOOL_URL}/tools/resolve_location",
-        payload={"query": body.origin},
-        trace_id=trace_id,
-        timeout_s=2.0,
-    )
-    dest_res = await _tool_post(
-        tool_name="flight_tool.resolve_location",
-        url=f"{FLIGHT_TOOL_URL}/tools/resolve_location",
-        payload={"query": body.destination},
-        trace_id=trace_id,
-        timeout_s=2.0,
-    )
-
-    if not origin_res.get("candidates") or not dest_res.get("candidates"):
-        raise HTTPException(status_code=400, detail={"error": "could_not_resolve_location"})
-
-    origin_code = origin_res["candidates"][0]["code"]
-    dest_code = dest_res["candidates"][0]["code"]
-
-    # 2) Save trip draft in db_tool
-    trip = await _tool_post(
-        tool_name="db_tool.save_trip",
-        url=f"{DB_TOOL_URL}/tools/save_trip",
-        payload={"session_id": body.session_id or "anonymous", "trip_type": "one-way", "status": "draft"},
-        trace_id=trace_id,
-        timeout_s=5.0,
-    )
-    trip_id = trip["trip_id"]
-
-    # 3) Call flight_tool search_flights
-    flight_payload = {
-        "legs": [{"origin": origin_code, "destination": dest_code, "date": body.date}],
-        "max_results": body.max_results,
-        "max_stops": body.max_stops,
-        "max_price": body.max_price,
-        "currency": body.currency,
+    # 2. Define the initial state for the graph
+    initial_state: GraphState = {
+        "request_body": body,
+        "trace_id": trace_id,
+        "origin_code": None,
+        "destination_code": None,
+        "trip_id": None,
+        "search_id": None,
+        "flight_results": [],
+        "error": None,
     }
-    results = await _tool_post(
-        tool_name="flight_tool.search_flights",
-        url=f"{FLIGHT_TOOL_URL}/tools/search_flights",
-        payload=flight_payload,
-        trace_id=trace_id,
-        timeout_s=5.0,
-    )
 
-    # 4) Persist search + offers in db_tool
-    # query_hash is computed by db_tool caller usually; we keep simple here.
-    query_hash = f"{origin_code}:{dest_code}:{body.date}:{body.max_results}:{body.max_stops}:{body.max_price}:{body.currency}"
-    saved_search = await _tool_post(
-        tool_name="db_tool.save_search",
-        url=f"{DB_TOOL_URL}/tools/save_search",
-        payload={"trip_id": trip_id, "provider": "flight_tool", "params_json": flight_payload, "query_hash": query_hash},
-        trace_id=trace_id,
-        timeout_s=5.0,
-    )
-    search_id = saved_search["search_id"]
+    # 3. Define the configuration to pass runtime dependencies to the nodes
+    # This is how our nodes get access to the robust `_tool_post` function.
+    config = {"configurable": {"tool_post": _tool_post}}
 
-    await _tool_post(
-        tool_name="db_tool.save_offers",
-        url=f"{DB_TOOL_URL}/tools/save_offers",
-        payload={"search_id": search_id, "offers": results.get("flights", [])},
-        trace_id=trace_id,
-        timeout_s=5.0,
-    )
+    # 4. Invoke the graph and let it orchestrate the tool calls
+    final_state = await graph_app.ainvoke(initial_state, config)
 
+    # 5. Handle the result from the graph
+    if final_state.get("error"):
+        logger.error("Graph execution failed with error: %s", final_state["error"])
+        # You can create more specific error codes based on the error message
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "workflow_failed", "details": final_state["error"], "trace_id": trace_id}
+        )
+
+    # 6. Construct the final response from the successful graph state
     return FlightSearchOut(
         trace_id=trace_id,
-        trip_id=trip_id,
-        origin=origin_code,
-        destination=dest_code,
-        results=results.get("flights", []),
+        trip_id=final_state["trip_id"],
+        origin=final_state["origin_code"],
+        destination=final_state["destination_code"],
+        results=final_state["flight_results"],
     )

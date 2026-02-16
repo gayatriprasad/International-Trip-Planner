@@ -1,3 +1,5 @@
+# apps/orchestrator/pyproject.toml
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -12,4 +14,16 @@ dependencies = [
   "httpx>=0.27",
   "travel-schemas",
   "travel-shared",
+  "redis",
+    # --- Add these new dependencies for LangGraph and LangSmith ---
+    "langgraph",
+    "langchain",
+    "langsmith"
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
