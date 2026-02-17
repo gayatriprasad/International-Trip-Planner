@@ -3,8 +3,6 @@
 from typing import TypedDict, List, Any, Optional
 from pydantic import BaseModel, Field
 
-# This is the initial input from the user, matching your existing Pydantic model
-# We can keep it here or import it from main, but defining it here is cleaner for the graph.
 class FlightSearchIn(BaseModel):
     origin: str = Field(min_length=2, max_length=64)
     destination: str = Field(min_length=2, max_length=64)
@@ -15,22 +13,21 @@ class FlightSearchIn(BaseModel):
     max_price: Optional[float] = None
     currency: str = Field(default="USD", min_length=3, max_length=3)
 
-
-# This is the central state of our graph.
-# It's the single object that gets passed around and updated by each node.
 class GraphState(TypedDict):
-    # Input state
+    # Input
     request_body: FlightSearchIn
     trace_id: str
     
-    # Intermediate state, populated by nodes
+    # Intermediate
     origin_code: Optional[str]
     destination_code: Optional[str]
     trip_id: Optional[str]
     search_id: Optional[str]
     
-    # Final output state
-    flight_results: List[Any]
+    # --- New Field for Phase 1.6 ---
+    city_guide: Optional[str] 
+    # -------------------------------
 
-    # Centralized error handling
+    # Output
+    flight_results: List[Any]
     error: Optional[str]

@@ -18,7 +18,11 @@ dependencies = [
     # --- Add these new dependencies for LangGraph and LangSmith ---
     "langgraph",
     "langchain",
-    "langsmith"
+    "langsmith",
+    "langchain-openai",
+    "langchain-community",
+    "tavily-python"
+
 ]
 
 [project.optional-dependencies]

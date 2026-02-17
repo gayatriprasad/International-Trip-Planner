@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 
 # --- LangGraph Imports ---
 from .graph import app as graph_app
-from .state import FlightSearchIn, GraphState
+# Import CityResearch here
+from .state import FlightSearchIn, GraphState, CityResearch 
 # --- End LangGraph Imports ---
 
 from shared.logging import configure_logging, get_logger
@@ -37,6 +38,7 @@ class FlightSearchOut(BaseModel):
     origin: str
     destination: str
     results: list[dict]
+    research: Optional[CityResearch] = None
 
 
 app = FastAPI(title="orchestrator", version="0.1.0")

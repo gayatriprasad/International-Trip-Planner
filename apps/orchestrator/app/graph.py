@@ -2,37 +2,42 @@
 
 from langgraph.graph import StateGraph, END
 from .state import GraphState
-from .nodes import resolve_locations, save_trip_draft, search_and_persist_flights
+from .nodes import resolve_locations, save_trip_draft, search_and_persist_flights, research_city
 
 def should_continue(state: GraphState) -> str:
-    """Determines whether to continue or end the workflow based on errors."""
     return "end" if state.get("error") else "continue"
 
-# This defines the workflow
 workflow = StateGraph(GraphState)
 
-# Add the nodes
+# Add Nodes
 workflow.add_node("resolve_locations", resolve_locations)
 workflow.add_node("save_trip_draft", save_trip_draft)
 workflow.add_node("search_and_persist_flights", search_and_persist_flights)
+workflow.add_node("research_city", research_city) # <--- New Node
 
-# Set the entrypoint
+# Set Entry Point
 workflow.set_entry_point("resolve_locations")
 
-# Define conditional edges
+# Edges
 workflow.add_conditional_edges(
     "resolve_locations",
     should_continue,
     {"continue": "save_trip_draft", "end": END}
 )
+
+# --- Parallel Execution ---
+# After saving the draft, we branch to BOTH search_flights AND research_city
 workflow.add_conditional_edges(
     "save_trip_draft",
     should_continue,
-    {"continue": "search_and_persist_flights", "end": END}
+    {
+        "continue": ["search_and_persist_flights", "research_city"], 
+        "end": END
+    }
 )
 
-# The final node always ends the graph
+# Both parallel nodes go to END
 workflow.add_edge("search_and_persist_flights", END)
+workflow.add_edge("research_city", END)
 
-# Compile the graph into a runnable app
 app = workflow.compile()
