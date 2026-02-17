@@ -1,0 +1,26 @@
+name: CI - Build Sanity Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Orchestrator Image
+        # This verifies that pyproject.toml is valid and dependencies can be installed
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/orchestrator/Dockerfile
+          push: false # We just want to verify the build, not push to a registry yet
+          tags: international-trip-planner-orchestrator:test

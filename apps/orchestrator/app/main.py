@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 # --- LangGraph Imports ---
 from .graph import app as graph_app
+
 # Import CityResearch here
 from .state import FlightSearchIn, GraphState, CityResearch 
 # --- End LangGraph Imports ---
@@ -174,4 +175,6 @@ async def flight_search(req: Request, body: FlightSearchIn) -> FlightSearchOut:
         origin=final_state["origin_code"],
         destination=final_state["destination_code"],
         results=final_state["flight_results"],
+        # Populate the new field from the final state
+        research=final_state.get("city_research")
     )
